@@ -1,6 +1,9 @@
 import cv2
+import matplotlib.pyplot as plt
 import os
 import numpy as np
+
+THRESHOLD_AREA = 0.1
 
 
 def read_image(image_path):
@@ -24,7 +27,7 @@ def eliminate_color(image):
     return image
 
 
-def masking(image):
+def masking(image, kernel_size=(3, 3), iter=3):
     imgFloat = image.astype(np.float32) / 255
 
     # Extracting the k channel (black channel)
@@ -32,47 +35,113 @@ def masking(image):
     kChannel = (255 * kChannel).astype(np.uint8)  # Convert back to unit 8
 
     # Thresholding the k channel
-    binaryThresh = 190
-    _, binaryImage = cv2.threshold(kChannel, binaryThresh, 255, cv2.THRESH_BINARY)
+    binaryThresh = 255
+    _, binaryImage = cv2.threshold(kChannel, binaryThresh, 255, cv2.THRESH_OTSU)
+    # _, binaryImage = cv2.threshold(kChannel, binaryThresh, 255, cv2.THRESH_BINARY)
 
-    cv2.imshow("binaryImage", binaryImage)
-
-    # Morphology
-    kernelSize = (3, 3)
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, kernelSize)
-    mask_image = cv2.morphologyEx(binaryImage, cv2.MORPH_CLOSE, kernel, iterations=5)
-    mask_image = cv2.morphologyEx(mask_image, cv2.MORPH_DILATE, kernel, iterations=5)
-
-    # cv2.imshow("mask_image", mask_image)
-    # cv2.waitKey(0)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, kernel_size)
+    mask_image = cv2.morphologyEx(binaryImage, cv2.MORPH_DILATE, kernel, iterations=iter)
 
     return mask_image
 
-def draw_roi_on_image(image, mask):
-    # Find connected components in the mask
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=4)
+
+def visualize_connected_components(mask_image):
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_image, connectivity=8)
+
+    # Create an empty RGB image
+    output_image = np.zeros((mask_image.shape[0], mask_image.shape[1], 3), dtype=np.uint8)
+
+    # For each label (excluding the background), assign a different color
+    for label in range(1, num_labels):
+        output_image[labels == label] = [np.random.randint(0, 255), np.random.randint(0, 255), np.random.randint(0, 255)]
+
+    # Display the image
+    plt.imshow(output_image)
+    plt.show()
+
+
+def erode_specific_component(image, label):
+    cv2.imshow("Before", image)
+
+    _, labels, _, _ = cv2.connectedComponentsWithStats(image, connectivity=8)
+
+    blank_image = np.zeros_like(image)
+
+
+    blank_image[labels == label] = 255
+
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+
+    eroded_image = cv2.erode(blank_image, kernel, iterations=3)
+
+    image[labels == label] = eroded_image[labels == label]
+
+    cv2.imshow("Eroded", image)
+    cv2.waitKey(0)
+
+    return image
+
+
+def check_area_of_mask(mask_image):
+    total_area = mask_image.shape[0] * mask_image.shape[1]
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_image, connectivity=8)
 
     # Iterate over each label
     for label in range(1, num_labels):
         # Get the bounding box of the label
-        area = stats[label, cv2.CC_STAT_AREA]
-        print(f"Area of {label}: {area}")
+        x, y, w, h, _ = stats[label]
+        component_area = w * h
+        if component_area / total_area < THRESHOLD_AREA:
+            cv2.rectangle(mask_image, (x, y), (x + w, y + h), (255, 255, 255), 2)
+        else:
+            removed_cc = np.zeros_like(mask_image)
+            removed_cc[labels == label] = 255
+            cv2.imshow("Removed CC", removed_cc)
+
+            mask_image = cv2.bitwise_xor(mask_image, removed_cc, mask=None)
+
+    cv2.imshow("After removed", mask_image)
+
+    return mask_image
+
+
+def draw_roi_on_image(image):
+    # Find connected components in the mask
 
     return image
 
+
 if __name__ == "__main__":
-    for image_path in os.listdir("../../data/test/chart_images/split_2/images"):
-        image = cv2.imread(f"../../data/test/chart_images/split_2/images/{image_path}")
-        # Do something with the image
-        # cv2.imshow("Before", image)
+    test_path = "../image_test"
 
-        mask_image = masking(image)
-        # cv2.imshow("Mask", mask_image)
+    image_paths = "../../data/test/chart_images/split_2/images/"
 
-        image = cv2.bitwise_and(image, image, mask=mask_image)
-        # cv2.imshow("After", image)
-        # cv2.waitKey(0)
-        print("Saving image")
-        cv2.imwrite(f"../../data/eleminate_color/{image_path}", image)
+    for image_path in os.listdir(test_path):
+        try:
+            # image_path = "PMC3338705___g005.jpg"
+            original_image = cv2.imread(f"{test_path}/{image_path}")
+            image = original_image.copy()
+        except:
+            continue
+
+        # First mask
+        mask_image = masking(image, kernel_size=(3, 3), iter=1)
+
+        # Remove unnecessary components (too large to be a text)
+        mask_image = check_area_of_mask(mask_image)
+
+        # Dilate
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        mask_image = cv2.morphologyEx(mask_image, cv2.MORPH_DILATE, kernel, iterations=3)
+
+        # cv2.imshow("Dilated", mask_image)
+
+        result_image = cv2.bitwise_and(image, image, mask=mask_image)
+
+        cv2.imshow("Final Result", result_image)
+        cv2.waitKey(0)
+        # vis = np.concatenate((original_image,result_image), axis=1)
+        # cv2.imwrite(f"{test_path}/processed/{image_path}", vis)
 
