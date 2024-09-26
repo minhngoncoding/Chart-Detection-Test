@@ -2,11 +2,12 @@ import cv2
 import matplotlib.pyplot as plt
 import os
 import numpy as np
-from src.utils.img_utils import stackImages
+from src.utils.img_utils import *
+from tesseract_ocr import tesseract_ocr
 
-THRESHOLD_AREA = 0.005
-ASPECT_RAITO = [1/10, 15]
-AREA = [20, 2000]
+THRESHOLD_AREA = 0.01 # If decrease -> take less components
+ASPECT_RAITO = [1/5, 10] # If increase -> take more large components
+AREA = [30, 2000]
 
 
 def read_image(image_path):
@@ -30,39 +31,30 @@ def eliminate_color(image):
     return image
 
 
-def masking(image, binaryThresh=180, kernel_size=(3, 3), iter=3, otsu_flag=False):
-    imgFloat = image.astype(np.float32) / 255
+def thresholding(image, binaryThresh=180, kernel_size=(3, 3), iter=3, otsu_flag=False):
+    # imgFloat = image.astype(np.float32) / 255
+    #
+    # # Extracting the k channel (black channel)
+    # kChannel = 1 - np.max(imgFloat, axis=2)
+    # kChannel = (255 * kChannel).astype(np.uint8)  # Convert back to unit 8
 
-    # Extracting the k channel (black channel)
-    kChannel = 1 - np.max(imgFloat, axis=2)
-    kChannel = (255 * kChannel).astype(np.uint8)  # Convert back to unit 8
+    grayImage = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
     # Thresholding the k channel
     if otsu_flag:
-        _, binaryImage = cv2.threshold(kChannel, binaryThresh, 255, cv2.THRESH_OTSU)
+        _, binaryImage = cv2.threshold(grayImage, binaryThresh, 255, cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
     else:
-        _, binaryImage = cv2.threshold(kChannel, binaryThresh, 255, cv2.THRESH_BINARY)
+        binaryImage = cv2.adaptiveThreshold(grayImage,
+                                   255,  # maximum value assigned to pixel values exceeding the threshold
+                                   cv2.ADAPTIVE_THRESH_GAUSSIAN_C,  # gaussian weighted sum of neighborhood
+                                   cv2.THRESH_BINARY_INV,  # thresholding type
+                                   3,  # block size (5x5 window)
+                                   3)  # constant
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, kernel_size)
-    mask_image = cv2.morphologyEx(binaryImage, cv2.MORPH_DILATE, kernel, iterations=iter)
+    # kernel = cv2.getStructuringElement(cv2.MORPH_RECT, kernel_size)
+    # mask_image = cv2.morphologyEx(binaryImage, cv2.MORPH_DILATE, kernel, iterations=iter)
 
-    return mask_image
-
-
-def visualize_connected_components(mask_image):
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_image, connectivity=8)
-
-    # Create an empty RGB image
-    output_image = np.zeros((mask_image.shape[0], mask_image.shape[1], 3), dtype=np.uint8)
-
-    # For each label (excluding the background), assign a different color
-    for label in range(1, num_labels):
-        output_image[labels == label] = [np.random.randint(0, 255), np.random.randint(0, 255), np.random.randint(0, 255)]
-
-    # # Display the image
-    # plt.imshow(output_image)
-    # plt.show()
-    return output_image
+    return binaryImage
 
 
 def erode_specific_component(image, label):
@@ -81,38 +73,48 @@ def erode_specific_component(image, label):
     image[labels == label] = eroded_image[labels == label]
 
     cv2.imshow("Eroded", image)
-    cv2.waitKey(0)
 
     return image
+
+
+def remove_vertical_line(input_image):
+    removed = input_image.copy()
+    thresh = cv2.threshold(removed, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+    vertical_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))
+    remove_vertical = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, vertical_kernel, iterations=2)
+    cnts = cv2.findContours(remove_vertical, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = cnts[0] if len(cnts) == 2 else cnts[1]
+
+    for c in cnts:
+        cv2.drawContours(removed, [c], -1, (255, 255, 255), 15)
+
+    return removed
 
 
 def check_connected_component(mask_image):
     total_area = mask_image.shape[0] * mask_image.shape[1]
 
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_image, connectivity=4)
+    remove_cc_image = mask_image.copy()
 
-    temp = mask_image.copy()
     for label in range(1, num_labels):
         x, y, w, h, area = stats[label]
 
         roi = mask_image[y:y+h, x:x+w]
 
         # print(f"Area {area}: {check_area(area)} and Raito {h/w :.2f}: {check_aspect_raito(h, w)}")
-        # cv2.imshow("ROI", roi)
         component_area = w*h
 
-        temp = cv2.rectangle(temp, (x,y), (x+w, y+h), (255,255,255), 2)
         if not ((component_area / total_area) < THRESHOLD_AREA) or not check_aspect_raito(h,w) or not check_area(area):
             # TODO: Need to check something before removing (sometimes large component connected with other texts)
-            mask_image = remove_cc(mask_image, labels, label)
-            # mask_image = cv2.rectangle(mask_image, (x,y), (x+w, y+h), (0,255,0), 2)
-            # cv2.imshow("Visualize:", mask_image)
-            # cv2.waitKey(0)
+            remove_cc_image = remove_cc(remove_cc_image, labels, label)
         else:
             # TODO: Remove noises by checking concentration of ROI
             pass
+            # if check_concentration_of_components(roi) > 1.5:
+            #     remove_cc_image = remove_cc(remove_cc_image, labels, label)
 
-    return temp, mask_image
+    return remove_cc_image
 
 
 def remove_cc(mask, labels, label):
@@ -149,75 +151,56 @@ def count_black_and_white_pixels(binary_image):
     return white_pixel, black_pixel
 
 
-def check_concentration_of_components(org_image, m_image):
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(m_image, connectivity=4)
-    for label in range(1, num_labels):
+def check_concentration_of_components(component):
+    roi = component.copy()
 
-        x, y, w, h, area = stats[label]
-        roi = original_image[y:y+h, x:x+w]
+    cv2.namedWindow("ROI", cv2.WINDOW_NORMAL)
+    cv2.imshow("ROI", roi)
 
-        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (3,3), 0)
+    white_pixel, black_pixel = count_black_and_white_pixels(roi)
+    if black_pixel == 0:
+        black_pixel = 1
 
-        (T, threshInv) = cv2.threshold(blurred, 200, 255,
-                                       cv2.THRESH_BINARY_INV)
+    concentration_score = white_pixel / black_pixel
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        erode_roi = cv2.morphologyEx(threshInv, cv2.MORPH_ERODE, kernel, iterations=2)
+    print(f"white_pixel: {white_pixel}, black_pixel: {black_pixel}, score: {(white_pixel/black_pixel):.2f}")
 
-        cv2.rectangle(org_image, (x, y), (x + w, y + h), (0, 255, 0), 1)
-
-        # cv2.imshow("ROI", roi)
-        # cv2.imshow("Erode", erode_roi)
-        # cv2.imshow("ROI Binary", threshInv)
-        # cv2.imshow("Original", org_image)
-
-        # cv2.waitKey(0)
-    return org_image, m_image
+    return concentration_score
 
 
 if __name__ == "__main__":
     test_path = "../image_test"
 
-    image_paths = "../../data/test/chart_images/split_2/images/"
+    image_paths = "../../data/test/chart_images/split_2/images"
 
-    for image_path in os.listdir(test_path):
-        try:
-            # image_path = "PMC3338705___g005.jpg"
-            original_image = cv2.imread(f"{test_path}/{image_path}")
-            image = original_image.copy()
+    train_paths = "../../data"
 
-            image = cv2.resize(image, (1000, 1000))
-        except:
+    for image_path in os.listdir(image_paths):
+        if image_path == "processed":
             continue
 
-        print(image.shape)
+        original_image = cv2.imread(f"{image_paths}/{image_path}")
+        image = original_image.copy()
+
+        image = cv2.resize(image, (1000, 1000))
+
         # First mask
-        mask_image_otsu = masking(image, 250, kernel_size=(3,3), iter=1, otsu_flag=True)
-        mask_image_normal = masking(image, 100, kernel_size=(1,1), iter=2)
+        mask_image_otsu = thresholding(image, 250, kernel_size=(1, 1), iter=1, otsu_flag=True)
+        # mask_image_normal = thresholding(image, 100, kernel_size=(1,1), iter=3)
+        # mask_image = cv2.bitwise_and(mask_image_normal, mask_image_otsu)
 
-        # all_masks = stackImages(1, [original_image, mask_image_otsu, mask_image_normal])
-        # cv2.imshow("All Mask", all_masks)
-
-        mask_image = cv2.bitwise_and(mask_image_normal, mask_image_otsu)
-
-        # visualize = visualize_connected_components(mask_image)
-        # cv2.imshow("Final Mask", mask_image)
-        # cv2.waitKey(0)
-        # Remove unnecessary components (too large to be a text)
-        alo, remove_large_area_image = check_connected_component(mask_image)
+        # cv2.imshow("Otsu", mask_image_otsu)
+        remove_large_area_image = check_connected_component(mask_image_otsu)
 
 
-        # cv2.imshow("After remove: ", remove_large_area_image)
-        # kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        # remove_large_area_image = cv2.morphologyEx(mask_image, cv2.MORPH_CLOSE, kernel, iterations=3)
+        # ocr_image = tesseract_ocr(remove_large_area_imag)
         result_image = cv2.bitwise_and(image, image, mask=remove_large_area_image)
 
-        concat = stackImages(1, [original_image, result_image])
-        cv2.imshow("Result", concat)
-        # cv2.waitKey()
-        # cv2.waitKey(0)
-        vis = stackImages(1, [original_image, remove_large_area_image, alo])
-        cv2.imwrite(f"{test_path}/processed/{image_path}", vis)
+        vis = stackImages(1, [original_image, mask_image_otsu, remove_large_area_image])
+        cv2.imwrite(f"{image_paths}/processed/{image_path}",vis)
+    # original_image = f"{image_paths}/processed/PMC5832805___1_HTML.jpg"
+    # original_image = cv2.imread(original_image)
+    # cv2.imshow("Org", original_image)
+    # cv2.waitKey(0)
 
     print("------------------Finish------------------")
