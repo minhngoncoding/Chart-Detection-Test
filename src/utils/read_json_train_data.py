@@ -2,6 +2,8 @@ import json
 import os
 import shutil
 import pickle
+from typing import List
+
 
 def read_json_file(fpath, fname, output):
     f = open(fpath)
@@ -17,9 +19,6 @@ def read_json_file(fpath, fname, output):
     output.append(dct_data)
 
     return output
-
-def get_image_has_json(image_dir, fname_lst):
-    pass
 
 def delete_1kb_files(directory):
     """Deletes files of exactly 1KB size within the specified directory.
@@ -38,30 +37,32 @@ def delete_1kb_files(directory):
 
 def get_all_fname(input):
     files_name = []
-    print(input)
     for file in input:
-        files_name.append(file["file_name"])
+        files_name.append(os.path.splitext(file["file_name"])[0])
 
     return files_name
 
 
-def find_files_in_subfolders(folder_path, fname_list):
-  """Finds files in subfolders whose names are in the given list.
+def copy_images_by_name(source_root_folder, image_names_list, destination_folder):
+    # Check if destination folder exists, if not, create it
+    if not os.path.exists(destination_folder):
+        os.makedirs(destination_folder)
 
-  Args:
-    folder_path: The path to the root folder.
-    fname_list: A list of file names to search for.
+    # Walk through all subfolders and files in the source root folder
+    for root, dirs, files in os.walk(source_root_folder):
+        print(len(files))
+        for file_name in files:
+            # Check if the current file (without extension) exists in the image_names_list
+            if os.path.splitext(file_name)[0] in image_names_list:
+                # Full path of the image file
+                source_image_path = os.path.join(root, file_name)
+                # Destination path where the image will be copied
+                destination_image_path = os.path.join(destination_folder, file_name)
+                # Copy image to destination folder
+                shutil.copy(source_image_path, destination_image_path)
+                print(f"Copied: {file_name}")
 
-  Returns:
-    A list of file paths that match the criteria.
-  """
 
-  matching_files = []
-  for root, dirs, files in os.walk(folder_path):
-    for file in files:
-      if file in fname_list:
-        matching_files.append(os.path.join(root, file))
-  return matching_files
 
 def combine_folders(source_folder, destination_folder):
     """Combines files from multiple folders into a single destination folder.
@@ -83,20 +84,16 @@ if __name__ == "__main__":
     folder_to_delete = ["horizontal_bar", 'line', "scatter", 'vertical_bar', "vertical_box"]
     directory_path = "../../data/train/annotations_JSON"
     image_path = "../../data/train/images"
-    data_path = "../../data/train/annotations_JSON/real_data/json"
-
-    # output = []
-    # for fname in os.listdir(data_path):
-    #     read_json_file(f"{data_path}/{fname}", fname=fname, output=output)
-    #
-    # all_fname = get_all_fname(output)
+    data_path = "../../data/train/final_data/json"
 
     with open("all_fname.pkl", "rb") as f:
         filename_list = pickle.load(f)
 
-    find_files_in_subfolders("", filename_list)
-    # for fname in filename_list:
-    #     print(fname[:-5])
+    destination_folder ="../../data/train/final_data/images"
+    source_image_folder = "../../data/train/images"
+
+    copy_images_by_name(source_image_folder, filename_list, destination_folder)
+
 
 
 
