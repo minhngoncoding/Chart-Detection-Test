@@ -2,6 +2,19 @@ import numpy as np
 import cv2
 
 
+def visualize_connected_components(mask_image):
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_image, connectivity=8)
+
+    # Create an empty RGB image
+    output_image = np.zeros((mask_image.shape[0], mask_image.shape[1], 3), dtype=np.uint8)
+
+    # For each label (excluding the background), assign a different color
+    for label in range(1, num_labels):
+        output_image[labels == label] = [np.random.randint(0, 255), np.random.randint(0, 255), np.random.randint(0, 255)]
+
+    return output_image
+
+
 def stackImages(scale, imgArray):
     # The above code is just work for color images, how about if you have 1 gray and 1 color
     rows = len(imgArray)
