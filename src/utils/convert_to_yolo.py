@@ -1,6 +1,7 @@
 import json
 import os
 from PIL import Image
+import random
 
 
 def convert_to_yolo(task_output, image_width, image_height, class_id=0):
@@ -34,64 +35,69 @@ def convert_to_yolo(task_output, image_width, image_height, class_id=0):
     return yolo_annotations
 
 
-# Example usage:
-task_output = {
-    "text_blocks": [
-        {
-            "id": 0,
-            "polygon": {"x0": 248, "x1": 279, "x2": 279, "x3": 248, "y0": 10, "y1": 10, "y2": 24, "y3": 24},
-            "text": "93.6"
-        },
-        {
-            "id": 1,
-            "polygon": {"x0": 23, "x1": 46, "x2": 46, "x3": 23, "y0": 0, "y1": 0, "y2": 13, "y3": 13},
-            "text": "6.4"
-        }
-    ]
-}
+def create_train_valid_txt(input_img_folder, output_folder, train_split=0.8, test=False):
+    # create_train_valid_txt("/path/to/your/image/folder") if create train, valid.txt
+    # create_train_valid_txt("/path/to/your/image/folder", train_split = 1) if create test.txt
+    # Remember to adding "/" at the end of path.
 
-import os
-import random
+    if not os.path.exists(input_img_folder):
+        print(f"Image folder '{input_img_folder}' does not exist.")
+        return
 
-
-def create_train_valid_txt(image_folder, train_split=0.8):
     # Get a list of all image filenames in the folder
-    image_fnames = [f for f in os.listdir(image_folder) if
-                    f.endswith('.jpg') and os.path.isfile(os.path.join(image_folder, f))]
+    image_fnames = [f for f in os.listdir(input_img_folder) if
+                    f.endswith('.jpg') and os.path.isfile(os.path.join(input_img_folder, f))]
 
-    # Shuffle the images to ensure random distribution
-    random.shuffle(image_fnames)
+    if not image_fnames:
+        print("No images found in the specified folder.")
+        return
 
-    # Calculate the split index
-    split_idx = int(len(image_fnames) * train_split)
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
 
-    # Split the images into training and validation sets
-    train_images = image_fnames[:split_idx]
-    valid_images = image_fnames[split_idx:]
+    if not test:
+        # Shuffle the images to ensure random distribution
+        random.shuffle(image_fnames)
 
-    # Paths to train.txt and valid.txt
-    train_txt_path = os.path.join(image_folder, "train.txt")
-    valid_txt_path = os.path.join(image_folder, "valid.txt")
+        # Calculate the split index
+        split_idx = int(len(image_fnames) * train_split)
 
-    # Write the training images to train.txt
-    with open(train_txt_path, "w") as f:
-        for index, image_fname in enumerate(train_images):
-            if index == len(train_images) - 1:
-                f.write(image_folder+ image_fname)
-            else:
-                f.write(image_folder+ image_fname + "\n")
+        # Split the images into training and validation sets
+        train_images = image_fnames[:split_idx]
+        valid_images = image_fnames[split_idx:]
 
-    # Write the validation images to valid.txt
-    with open(valid_txt_path, "w") as f:
-        for index, image_fname in enumerate(valid_images):
-            if index == len(valid_images) - 1:
-                f.write(image_folder+ image_fname)
-            else:
-                f.write(image_folder+ image_fname + "\n")
+        # Paths to train.txt and valid.txt
 
+        train_txt_path = os.path.join(output_folder, "train.txt")
+        valid_txt_path = os.path.join(output_folder, "valid.txt")
 
-# Usage example:
-# create_train_valid_txt("/path/to/your/image/folder")
+        # Write the training images to train.txt
+        with open(train_txt_path, "w") as f:
+            for index, image_fname in enumerate(train_images):
+                if index == len(train_images) - 1:
+                    f.write(input_img_folder + image_fname)
+                else:
+                    f.write(input_img_folder + image_fname + "\n")
+
+        # Write the validation images to valid.txt
+        with open(valid_txt_path, "w") as f:
+            for index, image_fname in enumerate(valid_images):
+                if index == len(valid_images) - 1:
+                    f.write(input_img_folder + image_fname)
+                else:
+                    f.write(input_img_folder + image_fname + "\n")
+        print(f"train.txt and valid.txt have been created in '{output_folder}'.")
+    else:
+        test_txt_path = os.path.join(output_folder, "test.txt")
+
+        with open(test_txt_path, "w") as f:
+            for index, image_fname in enumerate(image_fnames):
+                if index == len(image_fnames) - 1:
+                    f.write(input_img_folder + image_fname)
+                else:
+                    f.write(input_img_folder + image_fname + "\n")
+        print(f"test.txt has been created in '{output_folder}'.")
+
 
 def create_yolo_folder(image_folder, json_folder, yolo_folder):
     for json_fname in os.listdir(json_folder):
@@ -135,8 +141,10 @@ if __name__ == "__main__":
 
     # create_yolo_folder(test_image_folder, test_json, yolo_test_folder)
 
-    create_train_valid_txt(image_folder="../../data/darknet_rotated/train/",
-                           train_split=0.8)
+    create_train_valid_txt(input_img_folder="../../data/darknet_rotated/train/",
+                           output_folder= "../../nn/yolov4",
+                           train_split= 0.8,
+                           test=False)
 
 
     # create_train_valid_txt(image_folder)
